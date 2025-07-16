@@ -16,7 +16,7 @@ npm start
 
 3. Ouvrir le navigateur :
 ```
-http://localhost:3000
+http://localhost:5000
 ```
 
 ## 📁 Fonctionnement
