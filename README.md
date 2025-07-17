@@ -7,11 +7,21 @@
 ```bash
 cd backend
 npm install
+
+cd frontend
+npm install
 ```
 
 2. Lancer le serveur :
 ```bash
+cd backend
 npm start
+```
+
+3. Lancer le frontend : 
+```bash
+cd frontend
+yarn start
 ```
 
 3. Ouvrir le navigateur :
