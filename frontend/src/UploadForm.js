@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 //import axios from 'axios'; pas utilisé mais la au cas ou
-//import './UploadForm.css'; // Import des styles CSS externes
+import './UploadForm.css'; // Import des styles CSS externes
 
 const UploadForm = () => {
   // États pour stocker la validité des champs et leur contenu
@@ -67,6 +67,8 @@ const UploadForm = () => {
       passeport
     );
   };
+
+  
   const API_URL = process.env.REACT_APP_API_URL;
 
   // Soumission du formulaire

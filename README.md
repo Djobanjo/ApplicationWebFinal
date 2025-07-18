@@ -24,7 +24,7 @@ cd frontend
 yarn start
 ```
 
-3. Ouvrir le navigateur :
+4. Ouvrir le navigateur :
 ```
 http://localhost:5000
 ```

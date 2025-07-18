@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
@@ -6,13 +7,18 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const tmp = require('tmp');
 const cors = require('cors');
+const fetch = require('node-fetch');
 
+
+function bufferToDataUrl(buffer, mimeType) {
+  return `data:${mimeType};base64,${buffer.toString('base64')}`;
+}
 
 
 const app = express();
 const PORT = 5000;
 
-app.use(cors()); //requete cross-origin
+app.use(cors()); // requête cross-origin
 
 // Autoriser le frontend sur localhost:3000
 app.use(cors());
@@ -21,14 +27,6 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 3 * 1024 * 1024 } // Limite de 3 Mo
 });
-
-// Sert les fichiers statiques du frontend
-/*app.use(express.static(path.join(__dirname, 'frontend')));
-app.use(express.urlencoded({ extended: true }));*/  //***plus besoin ***/
-
-/*app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'frontend', 'essai.html'));
-});*/  //==> plus besoin aussi
 
 function getFormattedTimestamp() {
   const now = new Date();
@@ -162,6 +160,49 @@ const saveFile = (buffer, folderPath, fileName) => {
   return filePath;
 };
 
+async function sendToGoogleAppsScript(clientName, photoBuffer, signatureBuffer, passeportBuffer) {
+  const appsScriptUrl = process.env.GOOGLE_APPS_SCRIPT_URL; // Mets ici l'URL de ton Apps Script
+
+  // Crée les data URLs
+  const photoDataUrl = bufferToDataUrl(photoBuffer, 'image/jpeg');
+  const signatureDataUrl = bufferToDataUrl(signatureBuffer, 'image/jpeg');
+  const passeportDataUrl = bufferToDataUrl(passeportBuffer, 'application/pdf');
+
+  // Si tu veux stocker dans localStorage côté client, tu stockerais ces dataUrls.
+  // Pour l'envoi vers Apps Script, tu peux extraire uniquement la partie base64 en enlevant le préfixe :
+  const photoBase64 = photoDataUrl.split(',')[1];
+  const signatureBase64 = signatureDataUrl.split(',')[1];
+  const passeportBase64 = passeportDataUrl.split(',')[1];
+
+  const payload = {
+    folders: [
+      {
+        name: clientName,
+        files: [
+          { name: 'photo.jpg', content: photoBase64, type: 'image/jpeg' },
+          { name: 'signature.jpg', content: signatureBase64, type: 'image/jpeg' },
+          { name: 'passeport.pdf', content: passeportBase64, type: 'application/pdf' }
+        ]
+      }
+    ]
+  };
+
+  const response = await fetch(appsScriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Erreur Apps Script: ${response.status} - ${errorText}`);
+  }
+
+  const json = await response.json();
+  return json;
+}
+
+
 app.post('/upload', upload.fields([
   { name: 'photo', maxCount: 1 },
   { name: 'signature', maxCount: 1 },
@@ -198,15 +239,22 @@ app.post('/upload', upload.fields([
     saveFile(signatureBuffer, folderPath, signatureFileName);
     saveFile(passeportBuffer, folderPath, passeportFileName);
 
+    try {
+      await sendToGoogleAppsScript(clientName, photoBuffer, signatureBuffer, passeportBuffer);
+    } catch (error) {
+      console.error(error);
+      return res.status(500).send('Erreur lors de l’envoi des fichiers vers Google Drive');
+    }
+
     return res.send('Fichiers envoyés et enregistrés avec succès.');
   } catch (err) {
     return res.status(400).send(`Erreur : ${err.message}`);
   }
 });
 
-app.use(express.static(path.join(__dirname,'..', 'frontend','build')));
-app.get('*', (req,res)=>{
-  res.sendFile(path.join(__dirname,'..','frontend','build','index.html'))
+app.use(express.static(path.join(__dirname, '..', 'frontend', 'build')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'frontend', 'build', 'index.html'));
 });
 
 app.listen(PORT, () => {
