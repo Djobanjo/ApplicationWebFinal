@@ -1,54 +1,45 @@
+//Ajoute dans le drive les fichiers envoyés
+
 function doPost(e) {
   try {
     Logger.log("Début doPost");
 
     const data = JSON.parse(e.postData.contents);
 
-    const rootFolderId = "14vJanwJ1yXBPSACWu_9C-r7Mz1-Uutk7";
+    const rootFolderId = "14vJanwJ1yXBPSACWu_9C-r7Mz1-Uutk7"; //<== ID du dossier racine du drive
     const rootFolder = DriveApp.getFolderById(rootFolderId);
 
-    const sheetId = "1pSPpUUP-3Ok_8cl5KFWRcvcEGYEAoj1xxbPtmfv7cbQ";
-    const sheet = SpreadsheetApp.openById(sheetId).getSheetByName("EnvoieDossierDrive");
+    if (data.folders && Array.isArray(data.folders)) {
+      data.folders.forEach(folder => {
+        const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd_HH-mm-ss");
+        const safeName = folder.name ? folder.name.toString().trim() : "Dossier_SansNom";
+        const folderNameWithTimestamp = "`${timestamp}_${safeName}`";
+        Logger.log("Création du dossier : " + folderNameWithTimestamp);
 
-    // Ajoute l'en-tête si vide
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["Nom du dossier", "Date de création", "Lien"]);
-    }
+        const subFolder = rootFolder.createFolder(folderNameWithTimestamp);
 
-    data.folders.forEach(folder => {
-      const subFolder = rootFolder.createFolder(folder.name);
+        folder.files.forEach(file => {
+          const dotIndex = file.name.lastIndexOf('.');
+          let newFileName;
+          if (dotIndex !== -1) {
+            const namePart = file.name.substring(0, dotIndex);
+            const extPart = file.name.substring(dotIndex);
+            newFileName = `${namePart}_${timestamp}${extPart}`;
+          } else {
+            newFileName = `${file.name}_${timestamp}`;
+          }
 
-      folder.files.forEach(file => {
-        const blob = Utilities.newBlob(
-          Utilities.base64Decode(file.content),
-          file.type,
-          file.name
-        );
-        subFolder.createFile(blob);
+          const blob = Utilities.newBlob(
+            Utilities.base64Decode(file.content),
+            file.type,
+            newFileName
+          );
+          subFolder.createFile(blob);
+        });
       });
-      function testVoirSousDossiers() {
-  const rootFolderId = "14vJanwJ1yXBPSACWu_9C-r7Mz1-Uutk7"; // Ton dossier Drive
-  const rootFolder = DriveApp.getFolderById(rootFolderId);
-  const folders = rootFolder.getFolders();
-
-  Logger.log("Sous-dossiers dans le dossier : " + rootFolder.getName());
-
-  while (folders.hasNext()) {
-    const folder = folders.next();
-    Logger.log("Nom : " + folder.getName() + " | Date de création : " + folder.getDateCreated());
-  }
-}
-
-      const folderName = subFolder.getName();
-      const creationDate = Utilities.formatDate(subFolder.getDateCreated(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-      const folderUrl = subFolder.getUrl();
-
-      sheet.appendRow([
-        folderName,
-        creationDate,
-        `=HYPERLINK("${folderUrl}"; "Lien")`
-      ]);
-    });
+    } else {
+      Logger.log("Aucun dossier à traiter.");
+    }
 
     return ContentService
       .createTextOutput(JSON.stringify({ status: 'success' }))
@@ -61,3 +52,5 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
+
+

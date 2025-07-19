@@ -3,29 +3,23 @@ const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
 const path = require('path');
-const fs = require('fs');
 const { execSync } = require('child_process');
 const tmp = require('tmp');
 const cors = require('cors');
 const fetch = require('node-fetch');
 
-
 function bufferToDataUrl(buffer, mimeType) {
   return `data:${mimeType};base64,${buffer.toString('base64')}`;
 }
 
-
 const app = express();
 const PORT = 5000;
 
-app.use(cors()); // requête cross-origin
-
-// Autoriser le frontend sur localhost:3000
-app.use(cors());
+app.use(cors()); // Requête cross-origin
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 3 * 1024 * 1024 } // Limite de 3 Mo
+  limits: { fileSize: 3 * 1024 * 1024 } // Limite 3 Mo
 });
 
 function getFormattedTimestamp() {
@@ -40,7 +34,6 @@ function getFormattedTimestamp() {
   return `${year}-${month}-${day}_${hour}-${minute}-${second}`;
 }
 
-// Nouvelle fonction pour nom de fichier avec date/heure au format demandé
 function getFormattedFileName(baseName, ext) {
   const now = new Date();
   const pad = (n) => n.toString().padStart(2, '0');
@@ -130,22 +123,21 @@ const validatePasseport = async (file) => {
   }
 
   if (file.size <= 1 * 1024 * 1024) {
-    // ≤ 1 Mo : on ne touche pas au fichier
+    // ≤ 1 Mo : pas de compression
     return file.buffer;
   }
 
   // Compression pour > 1 Mo
   const inputPath = tmp.tmpNameSync({ postfix: '.pdf' });
   const outputPath = tmp.tmpNameSync({ postfix: '.pdf' });
-  fs.writeFileSync(inputPath, file.buffer);
+  require('fs').writeFileSync(inputPath, file.buffer);
 
   try {
-    // Sous Windows : 'gswin64c', sinon 'gs'
     execSync(`gswin64c -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/screen -dDownsampleColorImages=true -dColorImageResolution=100 -dDownsampleGrayImages=true -dGrayImageResolution=100 -dDownsampleMonoImages=true -dMonoImageResolution=100 -dNOPAUSE -dQUIET -dBATCH -sOutputFile="${outputPath}" "${inputPath}"`);
 
-    const compressedBuffer = fs.readFileSync(outputPath);
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(outputPath);
+    const compressedBuffer = require('fs').readFileSync(outputPath);
+    require('fs').unlinkSync(inputPath);
+    require('fs').unlinkSync(outputPath);
 
     return compressedBuffer;
   } catch (error) {
@@ -154,34 +146,29 @@ const validatePasseport = async (file) => {
   }
 };
 
-const saveFile = (buffer, folderPath, fileName) => {
-  const filePath = path.join(folderPath, fileName);
-  fs.writeFileSync(filePath, buffer);
-  return filePath;
-};
-
 async function sendToGoogleAppsScript(clientName, photoBuffer, signatureBuffer, passeportBuffer) {
-  const appsScriptUrl = process.env.GOOGLE_APPS_SCRIPT_URL; // Mets ici l'URL de ton Apps Script
+  const appsScriptUrl = process.env.GOOGLE_APPS_SCRIPT_URL;
 
-  // Crée les data URLs
   const photoDataUrl = bufferToDataUrl(photoBuffer, 'image/jpeg');
   const signatureDataUrl = bufferToDataUrl(signatureBuffer, 'image/jpeg');
   const passeportDataUrl = bufferToDataUrl(passeportBuffer, 'application/pdf');
 
-  // Si tu veux stocker dans localStorage côté client, tu stockerais ces dataUrls.
-  // Pour l'envoi vers Apps Script, tu peux extraire uniquement la partie base64 en enlevant le préfixe :
   const photoBase64 = photoDataUrl.split(',')[1];
   const signatureBase64 = signatureDataUrl.split(',')[1];
   const passeportBase64 = passeportDataUrl.split(',')[1];
+
+  const photoFileName = getFormattedFileName('photo', '.jpg');
+  const signatureFileName = getFormattedFileName('signature', '.jpg');
+  const passeportFileName = getFormattedFileName('passeport', '.pdf');
 
   const payload = {
     folders: [
       {
         name: clientName,
         files: [
-          { name: 'photo.jpg', content: photoBase64, type: 'image/jpeg' },
-          { name: 'signature.jpg', content: signatureBase64, type: 'image/jpeg' },
-          { name: 'passeport.pdf', content: passeportBase64, type: 'application/pdf' }
+          { name: photoFileName, content: photoBase64, type: 'image/jpeg' },
+          { name: signatureFileName, content: signatureBase64, type: 'image/jpeg' },
+          { name: passeportFileName, content: passeportBase64, type: 'application/pdf' }
         ]
       }
     ]
@@ -198,10 +185,8 @@ async function sendToGoogleAppsScript(clientName, photoBuffer, signatureBuffer, 
     throw new Error(`Erreur Apps Script: ${response.status} - ${errorText}`);
   }
 
-  const json = await response.json();
-  return json;
+  return await response.json();
 }
-
 
 app.post('/upload', upload.fields([
   { name: 'photo', maxCount: 1 },
@@ -220,33 +205,9 @@ app.post('/upload', upload.fields([
     const signatureBuffer = await validateAndProcessImage(files.signature[0].buffer, 'signature');
     const passeportBuffer = await validatePasseport(files.passeport[0]);
 
-    const timestamp = getFormattedTimestamp();
-    const folderName = `${clientName}-${timestamp}`;
-    const folderPath = path.join(__dirname, 'uploads', folderName);
-    fs.mkdirSync(folderPath, { recursive: true });
+    await sendToGoogleAppsScript(clientName, photoBuffer, signatureBuffer, passeportBuffer);
 
-    // Extension des fichiers originaux
-    const photoExt = path.extname(files.photo[0].originalname) || '.jpg';
-    const signatureExt = path.extname(files.signature[0].originalname) || '.jpg';
-    const passeportExt = path.extname(files.passeport[0].originalname) || '.pdf';
-
-    // Génération des noms de fichiers avec date/heure
-    const photoFileName = getFormattedFileName('photo', photoExt);
-    const signatureFileName = getFormattedFileName('signature', signatureExt);
-    const passeportFileName = getFormattedFileName('passeport', passeportExt);
-
-    saveFile(photoBuffer, folderPath, photoFileName);
-    saveFile(signatureBuffer, folderPath, signatureFileName);
-    saveFile(passeportBuffer, folderPath, passeportFileName);
-
-    try {
-      await sendToGoogleAppsScript(clientName, photoBuffer, signatureBuffer, passeportBuffer);
-    } catch (error) {
-      console.error(error);
-      return res.status(500).send('Erreur lors de l’envoi des fichiers vers Google Drive');
-    }
-
-    return res.send('Fichiers envoyés et enregistrés avec succès.');
+    return res.send('Fichiers envoyés avec succès, sans stockage local.');
   } catch (err) {
     return res.status(400).send(`Erreur : ${err.message}`);
   }
@@ -260,4 +221,3 @@ app.get('*', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Serveur sur http://localhost:${PORT}`);
 });
-
