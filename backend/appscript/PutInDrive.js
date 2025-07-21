@@ -6,16 +6,16 @@ function doPost(e) {
 
     const data = JSON.parse(e.postData.contents);
 
-    const rootFolderId = "14vJanwJ1yXBPSACWu_9C-r7Mz1-Uutk7"; //<== ID du dossier racine du drive
+    const rootFolderId = "14vJanwJ1yXBPSACWu_9C-r7Mz1-Uutk7"; //<== ID du drive où fichiers doivent être envoyés
     const rootFolder = DriveApp.getFolderById(rootFolderId);
 
     if (data.folders && Array.isArray(data.folders)) {
       data.folders.forEach(folder => {
         const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd_HH-mm-ss");
         const safeName = folder.name ? folder.name.toString().trim() : "Dossier_SansNom";
-        const folderNameWithTimestamp = "`${timestamp}_${safeName}`";
+        const folderNameWithTimestamp = `${timestamp}_${safeName}`;
         Logger.log("Création du dossier : " + folderNameWithTimestamp);
-
+      
         const subFolder = rootFolder.createFolder(folderNameWithTimestamp);
 
         folder.files.forEach(file => {

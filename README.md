@@ -26,11 +26,12 @@ yarn start
 
 ## 4. Ouvrir le navigateur :
 ```
-http://localhost:5000
+tappez: http://localhost:5000
 ```
 
 ## 📁 Fonctionnement
 
 - Remplir le formulaire HTML
-- Les fichiers seront enregistrés dans `/backend/uploads/`
+- Les fichiers seront envoyer sur drive
+- Dans un sheet, toutes les minutes s'actualise et inscrit le nom du dossier et un lien vers chaque dossier drive
 
