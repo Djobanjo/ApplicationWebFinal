@@ -2,11 +2,13 @@ require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
+const smartcrop = require('smartcrop-sharp');
 const path = require('path');
 const { execSync } = require('child_process');
 const tmp = require('tmp');
 const cors = require('cors');
 const fetch = require('node-fetch');
+const fs = require('fs');
 
 function bufferToDataUrl(buffer, mimeType) {
   return `data:${mimeType};base64,${buffer.toString('base64')}`;
@@ -15,40 +17,22 @@ function bufferToDataUrl(buffer, mimeType) {
 const app = express();
 const PORT = 5000;
 
-app.use(cors()); // Requête cross-origin
+app.use(cors());
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 3 * 1024 * 1024 } // Limite 3 Mo
+  limits: { fileSize: 3 * 1024 * 1024 } // 3 Mo
 });
-
-function getFormattedTimestamp() {
-  const now = new Date();
-  const pad = (n) => n.toString().padStart(2, '0');
-  const year = now.getFullYear();
-  const month = pad(now.getMonth() + 1);
-  const day = pad(now.getDate());
-  const hour = pad(now.getHours());
-  const minute = pad(now.getMinutes());
-  const second = pad(now.getSeconds());
-  return `${year}-${month}-${day}_${hour}-${minute}-${second}`;
-}
 
 function getFormattedFileName(baseName, ext) {
   const now = new Date();
   const pad = (n) => n.toString().padStart(2, '0');
-  const day = pad(now.getDate());
-  const month = pad(now.getMonth() + 1);
-  const year = now.getFullYear();
-  const hour = pad(now.getHours());
-  const minute = pad(now.getMinutes());
-  const second = pad(now.getSeconds());
-  return `${baseName}_${day}_${month}_${year}-${hour}_${minute}_${second}${ext}`;
+  return `${baseName}_${pad(now.getDate())}_${pad(now.getMonth() + 1)}_${now.getFullYear()}-${pad(now.getHours())}_${pad(now.getMinutes())}_${pad(now.getSeconds())}${ext}`;
 }
 
 const validateAndProcessImage = async (buffer, field) => {
   let image = sharp(buffer);
-  const metadata = await image.metadata();
+  let metadata = await image.metadata();
   let { width, height, format } = metadata;
 
   if (field === 'photo' || field === 'signature') {
@@ -79,6 +63,23 @@ const validateAndProcessImage = async (buffer, field) => {
       throw new Error('Signature: dimensions trop petites (<200x67)');
     }
 
+    // ➤ Détection automatique avec smartcrop
+    const { topCrop } = await smartcrop.crop(buffer, { width: 1000, height: 300 });
+    buffer = await sharp(buffer)
+      .extract({
+        left: topCrop.x,
+        top: topCrop.y,
+        width: topCrop.width,
+        height: topCrop.height
+      })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+
+    image = sharp(buffer);
+    metadata = await image.metadata();
+    width = metadata.width;
+    height = metadata.height;
+
     const ratio = width / height;
     const minRatio = 2.8;
     const maxRatio = 3.2;
@@ -91,14 +92,11 @@ const validateAndProcessImage = async (buffer, field) => {
         .resize({
           width: Math.round(targetWidth),
           height: Math.round(targetHeight),
-          fit: 'fill'
+          fit: 'fill',
+          background: { r: 255, g: 255, b: 255 }
         })
         .jpeg({ quality: 80 })
         .toBuffer();
-
-      const resizedMeta = await sharp(buffer).metadata();
-      width = resizedMeta.width;
-      height = resizedMeta.height;
     }
 
     if (width > 3500 || height > 2500 || buffer.length > 1024 * 1024) {
@@ -116,59 +114,78 @@ const validateAndProcessImage = async (buffer, field) => {
   return buffer;
 };
 
+const tryCompressPdf = (input, output, quality) => {
+  try {
+    const settings = {
+      screen: '/screen',
+      ebook: '/ebook',
+      printer: '/printer'
+    };
+
+    const setting = settings[quality] || '/screen';
+    console.log(`→ Compression PDF avec Ghostscript : ${setting}`);
+
+    execSync(`gswin64c -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${setting} -dNOPAUSE -dQUIET -dBATCH -sOutputFile="${output}" "${input}"`);
+    const resultBuffer = fs.readFileSync(output);
+    console.log(`✓ Taille compressée (${quality}): ${(resultBuffer.length / 1024).toFixed(1)} Ko`);
+    return resultBuffer;
+  } catch (e) {
+    console.error(`⚠️ Erreur compression Ghostscript (${quality})`, e);
+    return null;
+  }
+};
+
 const validatePasseport = async (file) => {
   const ext = path.extname(file.originalname).toLowerCase();
-  if (ext !== '.pdf') {
-    throw new Error('Le passeport doit être un fichier PDF.');
-  }
+  if (ext !== '.pdf') throw new Error('Le passeport doit être un fichier PDF.');
 
-  if (file.size <= 1 * 1024 * 1024) {
-    // ≤ 1 Mo : pas de compression
+  const MAX_SIZE = 1 * 1024 * 1024;
+  if (file.size <= MAX_SIZE) {
+    console.log("✓ PDF taille OK, pas de compression");
     return file.buffer;
   }
 
-  // Compression pour > 1 Mo
   const inputPath = tmp.tmpNameSync({ postfix: '.pdf' });
   const outputPath = tmp.tmpNameSync({ postfix: '.pdf' });
-  require('fs').writeFileSync(inputPath, file.buffer);
+  fs.writeFileSync(inputPath, file.buffer);
 
-  try {
-    execSync(`gswin64c -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/screen -dDownsampleColorImages=true -dColorImageResolution=100 -dDownsampleGrayImages=true -dGrayImageResolution=100 -dDownsampleMonoImages=true -dMonoImageResolution=100 -dNOPAUSE -dQUIET -dBATCH -sOutputFile="${outputPath}" "${inputPath}"`);
+  const qualities = ['screen', 'ebook', 'printer'];
+  let bestBuffer = null;
 
-    const compressedBuffer = require('fs').readFileSync(outputPath);
-    require('fs').unlinkSync(inputPath);
-    require('fs').unlinkSync(outputPath);
+  for (const quality of qualities) {
+    const buffer = tryCompressPdf(inputPath, outputPath, quality);
+    if (buffer && buffer.length <= MAX_SIZE) {
+      fs.unlinkSync(inputPath);
+      fs.unlinkSync(outputPath);
+      return buffer;
+    }
+    if (!bestBuffer || (buffer && buffer.length < bestBuffer.length)) {
+      bestBuffer = buffer;
+    }
+  }
 
-    return compressedBuffer;
-  } catch (error) {
-    console.error('Erreur Ghostscript:', error);
-    throw new Error("Erreur lors de la compression du passeport (Ghostscript)");
+  fs.unlinkSync(inputPath);
+  fs.unlinkSync(outputPath);
+
+  if (bestBuffer) {
+    console.warn("⚠️ Aucun résultat <1Mo. Utilisation de la version la plus légère possible.");
+    return bestBuffer;
+  } else {
+    throw new Error("Échec de la compression du PDF.");
   }
 };
 
 async function sendToGoogleAppsScript(clientName, photoBuffer, signatureBuffer, passeportBuffer) {
   const appsScriptUrl = process.env.GOOGLE_APPS_SCRIPT_URL;
 
-  const photoDataUrl = bufferToDataUrl(photoBuffer, 'image/jpeg');
-  const signatureDataUrl = bufferToDataUrl(signatureBuffer, 'image/jpeg');
-  const passeportDataUrl = bufferToDataUrl(passeportBuffer, 'application/pdf');
-
-  const photoBase64 = photoDataUrl.split(',')[1];
-  const signatureBase64 = signatureDataUrl.split(',')[1];
-  const passeportBase64 = passeportDataUrl.split(',')[1];
-
-  const photoFileName = getFormattedFileName('photo', '.jpg');
-  const signatureFileName = getFormattedFileName('signature', '.jpg');
-  const passeportFileName = getFormattedFileName('passeport', '.pdf');
-
   const payload = {
     folders: [
       {
         name: clientName,
         files: [
-          { name: photoFileName, content: photoBase64, type: 'image/jpeg' },
-          { name: signatureFileName, content: signatureBase64, type: 'image/jpeg' },
-          { name: passeportFileName, content: passeportBase64, type: 'application/pdf' }
+          { name: getFormattedFileName('photo', '.jpg'), content: bufferToDataUrl(photoBuffer, 'image/jpeg').split(',')[1], type: 'image/jpeg' },
+          { name: getFormattedFileName('signature', '.jpg'), content: bufferToDataUrl(signatureBuffer, 'image/jpeg').split(',')[1], type: 'image/jpeg' },
+          { name: getFormattedFileName('passeport', '.pdf'), content: bufferToDataUrl(passeportBuffer, 'application/pdf').split(',')[1], type: 'application/pdf' }
         ]
       }
     ]
@@ -201,6 +218,7 @@ app.post('/upload', upload.fields([
       return res.status(400).send('Tous les champs sont obligatoires.');
     }
 
+    console.log(`\n--- Upload de : ${clientName} ---`);
     const photoBuffer = await validateAndProcessImage(files.photo[0].buffer, 'photo');
     const signatureBuffer = await validateAndProcessImage(files.signature[0].buffer, 'signature');
     const passeportBuffer = await validatePasseport(files.passeport[0]);
@@ -209,6 +227,7 @@ app.post('/upload', upload.fields([
 
     return res.send('Fichiers envoyés avec succès, sans stockage local.');
   } catch (err) {
+    console.error("❌ Erreur : ", err.message);
     return res.status(400).send(`Erreur : ${err.message}`);
   }
 });
@@ -219,5 +238,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Serveur sur http://localhost:${PORT}`);
+  console.log(`✅ Serveur lancé sur http://localhost:${PORT}`);
 });
