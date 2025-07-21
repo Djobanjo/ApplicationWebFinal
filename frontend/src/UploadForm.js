@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useEffect } from 'react';
 //import axios from 'axios'; pas utilisé mais la au cas ou
 import './UploadForm.css'; // Import des styles CSS externes
 
@@ -15,6 +16,41 @@ const UploadForm = () => {
   const [formStatus, setFormStatus] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  function dataURLtoFile(dataurl, filename) {
+  const arr = dataurl.split(',');
+  const mime = arr[0].match(/:(.*?);/)[1];
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+
+  return new File([u8arr], filename, { type: mime });
+}
+
+
+  useEffect(() => {
+    const savedNom = localStorage.getItem('nom');
+    const savedPhoto = localStorage.getItem('photo');
+    const savedSignature = localStorage.getItem('signature');
+    const savedPasseport = localStorage.getItem('passeport');
+
+    console.log("🔄 Chargement depuis localStorage:", {
+    nom: savedNom,
+    photo: savedPhoto?.substring(0, 50) + '...',
+    signature: savedSignature?.substring(0, 50) + '...',
+    passeport: savedPasseport?.substring(0, 50) + '...',
+    });
+
+    if (savedNom) setNom(savedNom);
+    if (savedPhoto) setPhoto(dataURLtoFile(savedPhoto, 'photo.png'));
+    if (savedSignature) setSignature(dataURLtoFile(savedSignature, 'signature.png'));
+    if (savedPasseport) setPasseport(dataURLtoFile(savedPasseport, 'passeport.pdf'));
+  }, []);
+
+
   // Vérifie les extensions valides pour chaque type de fichier
   const validExtensions = {
     photo: ['image/jpg', 'image/png','image/jpeg'],
@@ -25,31 +61,53 @@ const UploadForm = () => {
   
 
   // Fonction de mise à jour de l'état d'un fichier sélectionné
-  const handleFileChange = (e, type) => {
-    const file = e.target.files[0];
+const handleFileChange = (e, type) => {
+  const file = e.target.files[0];
 
-    if (!file) {
-      updateStatus(type, '', 'Aucun fichier sélectionné');
-      updateFileState(type, null);
-      return;
-    }
+  if (!file) {
+    updateStatus(type, '', 'Aucun fichier sélectionné');
+    updateFileState(type, null);
+    localStorage.removeItem(type);
+    return;
+  }
 
-    if (!validExtensions[type].includes(file.type)) {
-      updateStatus(type, 'Format de fichier invalide', '');
-      updateFileState(type, null);
-      return;
-    }
+  if (!validExtensions[type].includes(file.type)) {
+    updateStatus(type, 'Format de fichier invalide', '');
+    updateFileState(type, null);
+    localStorage.removeItem(type);
+    return;
+  }
 
-    updateFileState(type, file);
-    updateStatus(type, '', `Fichier choisi : ${file.name}`);
-  };
+  updateFileState(type, file);
+  updateStatus(type, '', `Fichier choisi : ${file.name}`);
+
+  try {
+    const reader = new FileReader();
+    reader.onload = () => {
+      localStorage.setItem(type, reader.result);
+      console.log(`Fichier ${type} stocké en localStorage (${reader.result.substring(0,50)}...)`);
+    };
+    reader.onerror = (error) => {
+      console.error("Erreur lors de la lecture du fichier :", error);
+    };
+    reader.readAsDataURL(file);
+  } catch (error) {
+    console.error("Exception lors de readAsDataURL :", error);
+  }
+};
+
 
   // Met à jour les messages d'état (erreur ou succès)
   const updateStatus = (type, error, success) => {
-    if (type === 'photo') setPhotoStatus(error || success);
-    if (type === 'signature') setSignatureStatus(error || success);
-    if (type === 'passeport') setPasseportStatus(error || success);
-  };
+  const message = error || success;
+  switch (type) {
+    case 'photo': setPhotoStatus(message); break;
+    case 'signature': setSignatureStatus(message); break;
+    case 'passeport': setPasseportStatus(message); break;
+    default: break;
+  }
+};
+
 
   // Met à jour le fichier sélectionné
   const updateFileState = (type, file) => {
@@ -77,6 +135,14 @@ const UploadForm = () => {
     setIsSubmitting(true);
     setFormStatus('Envoi en cours...');
 
+    // LOG : contenu du localStorage avant envoi
+    console.log("Contenu localStorage AVANR envoi :", {
+      nom: localStorage.getItem('nom'),
+      photo: localStorage.getItem('photo')?.substring(0, 100) + '...', //tronqué
+      signature: localStorage.getItem('signature')?.substring(0, 100) + '...',
+    });
+
+
     const formData = new FormData();
     formData.append('nom', nom);
     formData.append('photo', photo);
@@ -91,7 +157,12 @@ const UploadForm = () => {
 
       if (response.ok) {
         setFormStatus('Documents téléchargés avec succès !');
-        setTimeout(() => window.location.reload(), 2000);
+        // 🧹 Vider les données du localStorage
+        localStorage.removeItem('photo');
+        localStorage.removeItem('signature');
+        localStorage.removeItem('passeport');
+        localStorage.removeItem('nom');
+        setTimeout(() => window.location.reload(), 1000);
       } else {
         const errorText = await response.text();
         setFormStatus(`Erreur lors du téléchargement : ${errorText}`);
@@ -114,7 +185,10 @@ const UploadForm = () => {
             type="text"
             id="nom"
             value={nom}
-            onChange={(e) => setNom(e.target.value)}
+            onChange={(e) => {
+              setNom(e.target.value);
+            localStorage.setItem('nom',e.target.value);
+            }}
             placeholder="Entrez votre nom"
             required
             style={{ backgroundColor : 'beige', justifyContent: 'center'}}
@@ -181,7 +255,7 @@ const UploadForm = () => {
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-upload" viewBox="0 0 16 16">
     <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>
     <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z"/>
-  </svg> Choisir un fichier1
+  </svg> Choisir un fichier
             <input
               id='passeport'
               type="file"
