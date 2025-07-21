@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
-const smartcrop = require('smartcrop-sharp');
 const path = require('path');
 const { execSync } = require('child_process');
 const tmp = require('tmp');
@@ -63,15 +62,42 @@ const validateAndProcessImage = async (buffer, field) => {
       throw new Error('Signature: dimensions trop petites (<200x67)');
     }
 
-    // ➤ Détection automatique avec smartcrop
-    const { topCrop } = await smartcrop.crop(buffer, { width: 1000, height: 300 });
+    // Convert to greyscale raw pixels for signature detection
+    const { data, info } = await sharp(buffer)
+      .greyscale()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const threshold = 180; // seuil pour pixel "sombre"
+    let minX = info.width, minY = info.height;
+    let maxX = 0, maxY = 0;
+
+    for (let y = 0; y < info.height; y++) {
+      for (let x = 0; x < info.width; x++) {
+        const idx = y * info.width + x;
+        const value = data[idx];
+        if (value < threshold) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    if (minX > maxX || minY > maxY) throw new Error("Signature introuvable dans l'image");
+
+    const padding = 200;
+    minX = Math.max(minX - padding, 0);
+    minY = Math.max(minY - padding, 0);
+    maxX = Math.min(maxX + padding, info.width - 1);
+    maxY = Math.min(maxY + padding, info.height - 1);
+
+    const cropWidth = maxX - minX;
+    const cropHeight = maxY - minY;
+
     buffer = await sharp(buffer)
-      .extract({
-        left: topCrop.x,
-        top: topCrop.y,
-        width: topCrop.width,
-        height: topCrop.height
-      })
+      .extract({ left: minX, top: minY, width: cropWidth, height: cropHeight })
       .jpeg({ quality: 90 })
       .toBuffer();
 
@@ -92,7 +118,7 @@ const validateAndProcessImage = async (buffer, field) => {
         .resize({
           width: Math.round(targetWidth),
           height: Math.round(targetHeight),
-          fit: 'fill',
+          fit: 'contain',
           background: { r: 255, g: 255, b: 255 }
         })
         .jpeg({ quality: 80 })
