@@ -3,7 +3,7 @@
 
 ## 📦 Installation
 
-1. Installer les dépendances :
+## 1. Installer les dépendances :
 ```bash
 cd backend
 npm install
@@ -12,19 +12,19 @@ cd frontend
 npm install
 ```
 
-2. Lancer le serveur :
+## 2. Lancer le serveur :
 ```bash
 cd backend
 npm start
 ```
 
-3. Lancer le frontend : 
+## 3. Lancer le frontend : 
 ```bash
 cd frontend
 yarn start
 ```
 
-4. Ouvrir le navigateur :
+## 4. Ouvrir le navigateur :
 ```
 http://localhost:5000
 ```
